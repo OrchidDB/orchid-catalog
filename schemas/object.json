@@ -20,6 +20,9 @@
     },
     {
       "$ref": "#/$defs/retrieval"
+    },
+    {
+      "$ref": "#/$defs/cypher_relationship"
     }
   ],
   "$defs": {
@@ -686,6 +689,107 @@
         "mode",
         "max_results",
         "score_description"
+      ],
+      "additionalProperties": false
+    },
+    "parameter": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "schema": {
+          "type": [
+            "object",
+            "boolean"
+          ]
+        },
+        "default": {}
+      },
+      "required": [
+        "name",
+        "schema"
+      ],
+      "additionalProperties": false
+    },
+    "cypher_relationship": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "kind": {
+          "const": "cypher_relationship"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parameter"
+          },
+          "maxItems": 128
+        },
+        "cypher": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "properties": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              },
+              "additionalProperties": {
+                "type": [
+                  "object",
+                  "boolean"
+                ]
+              }
+            }
+          },
+          "required": [
+            "target",
+            "properties"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "kind",
+        "description",
+        "name",
+        "source",
+        "target",
+        "parameters",
+        "cypher",
+        "returns"
       ],
       "additionalProperties": false
     }

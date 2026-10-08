@@ -202,7 +202,7 @@ async fn scenario(database: &str) {
             Graph {
                 description: "Social graph".into(),
                 objects: vec!["person".into()],
-                execution_connector: "local".into(),
+                execution_connector: Some("local".into()),
             },
             0,
         )
@@ -248,7 +248,7 @@ async fn scenario(database: &str) {
             Graph {
                 description: "Social graph with relationships".into(),
                 objects: vec!["follows".into()],
-                execution_connector: "local".into(),
+                execution_connector: Some("local".into()),
             },
             1,
         )
@@ -404,7 +404,7 @@ fn schemas_and_provider_registration_remain_extensible() {
     for object in examples.as_object().unwrap().values() {
         orchid_catalog::model::validate_object(object).unwrap();
     }
-    let mut connector = examples["weaviate"].clone();
+    let mut connector = examples["document_backend"].clone();
     connector["adapter"] = json!("future_search_provider");
     orchid_catalog::model::validate_object(&connector).unwrap();
     connector["endpoint"] = json!("https://user:secret@example.com");
@@ -424,7 +424,7 @@ fn structural_checks_reject_dangling_keys_and_duplicate_labels() {
     let graph = Graph {
         description: "test".into(),
         objects: vec!["follows".into()],
-        execution_connector: "local".into(),
+        execution_connector: Some("local".into()),
     };
     let mut objects = definitions();
     objects.get_mut("person").unwrap()["mapping"]["id"] = json!("missing_column");
@@ -509,7 +509,7 @@ async fn identity_revocation_and_discovery_do_not_leak_connector_secrets() {
             Graph {
                 description: "test".into(),
                 objects: vec!["person".into()],
-                execution_connector: "local".into(),
+                execution_connector: Some("local".into()),
             },
             0,
         )
@@ -541,4 +541,227 @@ async fn identity_revocation_and_discovery_do_not_leak_connector_secrets() {
     live_identities.write().await.clear();
     assert!(admin.resolve("social", None).await.is_err());
     handle.abort();
+}
+
+fn declarative_bundle() -> Value {
+    serde_json::from_str(include_str!("../examples/declarative-relationships.json")).unwrap()
+}
+
+#[test]
+fn declarative_contract_validation() {
+    let bundle = declarative_bundle();
+    let objects: BTreeMap<String, Value> =
+        serde_json::from_value(bundle["objects"].clone()).unwrap();
+    let graph: Graph = serde_json::from_value(bundle["graph"].clone()).unwrap();
+    orchid_catalog::assembly::assemble(&graph, &objects).unwrap();
+    let original = &objects["similar_shapes"];
+    for (field, bad) in [
+        ("default", json!("ten")),
+        ("default", json!(0)),
+        ("schema", json!({"type": "bogus"})),
+        ("schema", json!({"$ref":"https://example.invalid/schema"})),
+    ] {
+        let mut edge = original.clone();
+        edge["parameters"][0][field] = bad;
+        assert!(validate_object(&edge).is_err());
+    }
+    let mut edge = original.clone();
+    edge["parameters"][1]["name"] = json!("k");
+    assert!(validate_object(&edge).is_err());
+    let mut edge = original.clone();
+    edge["cypher"] = json!(" \n ");
+    assert!(validate_object(&edge).is_err());
+    let mut edge = original.clone();
+    edge["returns"]["properties"]["target"] = json!({"type":"number"});
+    assert!(validate_object(&edge).is_err());
+    let mut edge = original.clone();
+    edge["returns"]["properties"]["score"] = json!({"type": 7});
+    assert!(validate_object(&edge).is_err());
+    edge["returns"]["properties"]["score"] = json!({"$ref":"https://example.invalid/schema"});
+    assert!(validate_object(&edge).is_err());
+    edge["returns"]["properties"]["score"] =
+        json!({"$defs":{"score":{"type":"number"}},"$ref":"#/$defs/score"});
+    validate_object(&edge).unwrap();
+    // Function calls are opaque Cypher; there is no catalog function registry.
+    edge["cypher"] = json!(
+        "WITH source RETURN source AS target, future.geometry.score(source.geometry) AS score"
+    );
+    validate_object(&edge).unwrap();
+    edge["functions"] = json!(["similar_shapes"]);
+    assert!(validate_object(&edge).is_err());
+    assert!(
+        validate_object(&json!({"kind":"function","name":"robotics.geometry.similarity"})).is_err()
+    );
+    for field in ["source", "target"] {
+        let mut bad = objects.clone();
+        bad.get_mut("similar_shapes").unwrap()[field] = json!("shapes");
+        assert!(orchid_catalog::assembly::assemble(&graph, &bad).is_err());
+    }
+    let mut bad = objects.clone();
+    bad.get_mut("related_documents").unwrap()["name"] = json!("SIMILAR");
+    assert!(orchid_catalog::assembly::assemble(&graph, &bad).is_err());
+}
+
+async fn declarative_scenario(database: &str) {
+    let store = Store::connect(database).await.unwrap();
+    let app = App::new(store.clone(), identities()).unwrap();
+    let (url, handle) = server(router(app)).await;
+    let scope = format!(
+        "declarative_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let admin = CatalogClient::new(&url, "admin".into(), scope.clone()).unwrap();
+    let reader = CatalogClient::new(&url, "reader".into(), scope.clone()).unwrap();
+    let discoverer = CatalogClient::new(&url, "discoverer".into(), scope).unwrap();
+    let bundle = declarative_bundle();
+    let mut versions = BTreeMap::new();
+    for (id, definition) in bundle["objects"].as_object().unwrap() {
+        let record = admin.register(id, definition.clone(), 0).await.unwrap();
+        versions.insert(id.clone(), record.version);
+    }
+    admin
+        .put_graph(
+            "knowledge",
+            serde_json::from_value(bundle["graph"].clone()).unwrap(),
+            0,
+        )
+        .await
+        .unwrap();
+    let publish_request = |versions: BTreeMap<String, i64>, revision| Publish {
+        expected_revision: revision,
+        graph_version: 1,
+        object_versions: versions,
+    };
+    let mut incomplete = versions.clone();
+    incomplete.remove("shape");
+    assert!(
+        admin
+            .publish("knowledge", publish_request(incomplete, 0))
+            .await
+            .is_err()
+    );
+    let first = admin
+        .publish("knowledge", publish_request(versions.clone(), 0))
+        .await
+        .unwrap();
+    assert_eq!(first.protocol_version, 2);
+    assert_eq!(
+        first.objects.len(),
+        bundle["objects"].as_object().unwrap().len()
+    );
+    assert!(first.schema["engines"].as_object().unwrap().is_empty());
+    for (id, definition) in bundle["objects"].as_object().unwrap() {
+        assert_eq!(&first.objects[id].definition, definition);
+    }
+    admin
+        .set_grants(
+            "knowledge",
+            Grants {
+                discover: vec!["discover".into()],
+                execute: vec!["read".into()],
+            },
+            0,
+        )
+        .await
+        .unwrap();
+    let discovered = discoverer.discover("knowledge", None).await.unwrap();
+    assert!(
+        discovered["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["definition"]["cypher"] == bundle["objects"]["similar_shapes"]["cypher"])
+    );
+    assert!(discoverer.resolve("knowledge", None).await.is_err());
+    let mut updated = bundle["objects"]["similar_shapes"].clone();
+    updated["description"] = json!("Updated contract description");
+    admin
+        .register("similar_shapes", updated.clone(), 1)
+        .await
+        .unwrap();
+    assert!(
+        admin
+            .publish("knowledge", publish_request(versions.clone(), 1))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        reader
+            .resolve("knowledge", None)
+            .await
+            .unwrap()
+            .manifest
+            .revision,
+        1
+    );
+    versions.insert("similar_shapes".into(), 2);
+    admin
+        .publish("knowledge", publish_request(versions.clone(), 1))
+        .await
+        .unwrap();
+    assert_eq!(
+        reader
+            .resolve("knowledge", None)
+            .await
+            .unwrap()
+            .manifest
+            .objects["similar_shapes"]
+            .definition,
+        updated
+    );
+    assert_eq!(
+        reader
+            .resolve("knowledge", Some(1))
+            .await
+            .unwrap()
+            .manifest
+            .objects["similar_shapes"]
+            .definition,
+        bundle["objects"]["similar_shapes"]
+    );
+    let mut bad = bundle["objects"]["similar_shapes"].clone();
+    bad["target"] = json!("shapes");
+    admin.register("similar_shapes", bad, 2).await.unwrap();
+    // Exact reviewed versions cannot publish a wrong-kind entity reference.
+    versions.insert("similar_shapes".into(), 3);
+    assert!(
+        admin
+            .publish("knowledge", publish_request(versions, 2))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        reader
+            .resolve("knowledge", None)
+            .await
+            .unwrap()
+            .manifest
+            .revision,
+        2
+    );
+    admin
+        .set_grants("knowledge", Grants::default(), 1)
+        .await
+        .unwrap();
+    assert!(reader.resolve("knowledge", Some(1)).await.is_err());
+    assert!(discoverer.discover("knowledge", Some(1)).await.is_err());
+    handle.abort();
+    store.pool.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sqlite_declarative_relationships() {
+    declarative_scenario("sqlite::memory:").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_declarative_relationships() {
+    if let Ok(url) = std::env::var("CATALOG_TEST_POSTGRES") {
+        declarative_scenario(&url).await;
+    } else {
+        eprintln!("Set CATALOG_TEST_POSTGRES for PostgreSQL integration tests");
+    }
 }

@@ -13,6 +13,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("CATALOG_TOKEN")?;
     let http = reqwest::Client::new();
     let base = format!("{}/v1/{scope}", endpoint.trim_end_matches('/'));
+    let graph_id = bundle["graph_id"].as_str().unwrap_or("social");
+    orchid_catalog::model::name(graph_id)?;
     let mut versions = serde_json::Map::new();
     for (name, definition) in bundle["objects"].as_object().ok_or("objects required")? {
         let response: Value = http
@@ -27,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         versions.insert(name.clone(), response["version"].clone());
     }
     let graph: Value = http
-        .put(format!("{base}/graphs/social"))
+        .put(format!("{base}/graphs/{graph_id}"))
         .bearer_auth(&token)
         .json(&json!({"expected_version":0,"definition":bundle["graph"]}))
         .send()
@@ -35,9 +37,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .error_for_status()?
         .json()
         .await?;
-    let published: Value = http.post(format!("{base}/graphs/social/publish")).bearer_auth(&token)
+    let published: Value = http.post(format!("{base}/graphs/{graph_id}/publish")).bearer_auth(&token)
         .json(&json!({"expected_revision":0,"graph_version":graph["version"],"object_versions":versions}))
         .send().await?.error_for_status()?.json().await?;
-    println!("Published social revision {}", published["revision"]);
+    println!("Published {graph_id} revision {}", published["revision"]);
     Ok(())
 }

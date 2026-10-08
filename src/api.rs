@@ -1,10 +1,10 @@
 use crate::{Error, Result, error::invalid, model::*, store::Store};
 use axum::{
-    Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, Request, State},
+    Extension, Form, Json, Router,
+    extract::{DefaultBodyLimit, FromRequestParts, MatchedPath, Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, post, put},
 };
 use serde::Deserialize;
@@ -13,13 +13,14 @@ use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::Duration};
 use subtle::ConstantTimeEq;
 use tokio::sync::{RwLock, Semaphore};
-use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
+use tower_http::timeout::TimeoutLayer;
 
 #[derive(Clone)]
 pub struct App {
     pub store: Store,
     pub identities: Arc<RwLock<Vec<Identity>>>,
     publications: Arc<Semaphore>,
+    pub authentication: Arc<RwLock<Option<Arc<crate::auth::Authenticator>>>>,
 }
 
 impl App {
@@ -29,14 +30,26 @@ impl App {
             store,
             identities: Arc::new(RwLock::new(identities)),
             publications: Arc::new(Semaphore::new(2)),
+            authentication: Arc::new(RwLock::new(None)),
         })
     }
-    async fn identity(&self, headers: &HeaderMap) -> Result<Principal> {
+    pub fn with_authentication(store: Store, authentication: crate::auth::Authenticator) -> Self {
+        Self {
+            store,
+            identities: Arc::new(RwLock::new(Vec::new())),
+            publications: Arc::new(Semaphore::new(2)),
+            authentication: Arc::new(RwLock::new(Some(Arc::new(authentication)))),
+        }
+    }
+    async fn identity(&self, headers: &HeaderMap, scope: &str) -> Result<Principal> {
         let token = headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or(Error::Unauthorized)?;
+        if let Some(auth) = self.authentication.read().await.clone() {
+            return auth.authenticate(&self.store, scope, token).await;
+        }
         let digest = format!("{:x}", Sha256::digest(token.as_bytes()));
         self.identities
             .read()
@@ -45,13 +58,6 @@ impl App {
             .find(|i| bool::from(digest.as_bytes().ct_eq(i.sha256.as_bytes())))
             .map(|i| i.principal.clone())
             .ok_or(Error::Unauthorized)
-    }
-    async fn admin(&self, headers: &HeaderMap) -> Result<Principal> {
-        let principal = self.identity(headers).await?;
-        if !principal.admin {
-            return Err(Error::Forbidden);
-        }
-        Ok(principal)
     }
     async fn authorize(
         &self,
@@ -109,8 +115,18 @@ pub fn validate_identities(identities: &[Identity]) -> Result<()> {
 pub fn router(app: App) -> Router {
     Router::new()
         .route("/healthz", get(health))
+        .route("/v1/{scope}/oauth/tokens", post(token))
+        .route("/v1/{scope}/principals", get(principals))
+        .route(
+            "/v1/{scope}/principals/{id}",
+            get(principal).put(register_principal),
+        )
         .route(
             "/v1/schema",
+            get(|| async { Json(serde_json::from_str::<Value>(OBJECT_SCHEMA).expect("schema")) }),
+        )
+        .route(
+            "/v1/{scope}/schema",
             get(|| async { Json(serde_json::from_str::<Value>(OBJECT_SCHEMA).expect("schema")) }),
         )
         .route("/v1/{scope}/objects", get(objects))
@@ -126,18 +142,97 @@ pub fn router(app: App) -> Router {
         .route("/v1/{scope}/graphs/{id}/resolve", get(resolve))
         .route("/v1/{scope}/graphs/{id}/discover", get(discover))
         .route("/v1/{scope}/audit", get(audit))
+        .layer(middleware::from_fn_with_state(app.clone(), access_gate))
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(30),
         ))
         .layer(middleware::from_fn(response_headers))
-        .layer(TraceLayer::new_for_http())
         .with_state(app)
+}
+
+async fn access_gate(State(app): State<App>, request: Request, next: Next) -> Response {
+    if request.uri().path() == "/healthz" {
+        return next.run(request).await;
+    }
+    let (mut parts, body) = request.into_parts();
+    let route = parts
+        .extensions
+        .get::<MatchedPath>()
+        .map(|path| path.as_str().to_owned())
+        .unwrap_or_default();
+    if route == "/v1/{scope}/oauth/tokens" {
+        return next.run(Request::from_parts(parts, body)).await;
+    }
+    let params = if route.contains("{scope}") {
+        match Path::<std::collections::HashMap<String, String>>::from_request_parts(
+            &mut parts, &app,
+        )
+        .await
+        {
+            Ok(Path(params)) => params,
+            Err(_) => return Error::Unauthorized.into_response(),
+        }
+    } else {
+        Default::default()
+    };
+    let scope = params.get("scope").map(String::as_str).unwrap_or("default");
+    let principal = match app.identity(&parts.headers, scope).await {
+        Ok(principal) => principal,
+        Err(error) => return error.into_response(),
+    };
+    if route.contains("{scope}") {
+        let Some(scope) = params.get("scope") else {
+            return Error::NotFound.into_response();
+        };
+        let administration = !matches!(
+            route.as_str(),
+            "/v1/{scope}/schema"
+                | "/v1/{scope}/graphs"
+                | "/v1/{scope}/graphs/{id}/discover"
+                | "/v1/{scope}/graphs/{id}/resolve"
+        );
+        if administration && !principal.admin {
+            return Error::Forbidden.into_response();
+        }
+        if matches!(
+            route.as_str(),
+            "/v1/{scope}/graphs/{id}/discover" | "/v1/{scope}/graphs/{id}/resolve"
+        ) {
+            let Some(id) = params.get("id") else {
+                return Error::NotFound.into_response();
+            };
+            if let Err(error) = app
+                .authorize(scope, id, &principal, route.ends_with("/resolve"))
+                .await
+            {
+                return error.into_response();
+            }
+        }
+    }
+    parts.extensions.insert(principal);
+    next.run(Request::from_parts(parts, body)).await
 }
 
 async fn response_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
+    if (response.status().is_client_error() || response.status().is_server_error())
+        && response.extensions().get::<OAuthResponse>().is_none()
+    {
+        let status = response.status();
+        let mut sanitized = (
+            status,
+            Json(json!({"error": status.canonical_reason().unwrap_or("request failed")})),
+        )
+            .into_response();
+        if status == StatusCode::UNAUTHORIZED {
+            sanitized
+                .headers_mut()
+                .insert("www-authenticate", "Bearer".parse().unwrap());
+        }
+        response = sanitized;
+    }
     response
         .headers_mut()
         .insert("cache-control", "no-store".parse().unwrap());
@@ -149,16 +244,15 @@ async fn response_headers(request: Request, next: Next) -> Response {
 
 async fn health(State(app): State<App>) -> Result<Json<Value>> {
     sqlx::query("SELECT 1").execute(&app.store.pool).await?;
-    Ok(Json(json!({"status":"ok", "protocol_version":1})))
+    Ok(Json(json!({"status":"ok"})))
 }
 
 async fn register(
     State(app): State<App>,
     Path((scope, id)): Path<(String, String)>,
-    headers: HeaderMap,
+    Extension(principal): Extension<Principal>,
     Json(body): Json<Write<Object>>,
 ) -> Result<Json<Record>> {
-    let principal = app.admin(&headers).await?;
     validate_object(&body.definition)?;
     Ok(Json(
         app.store
@@ -176,17 +270,15 @@ async fn register(
 async fn object(
     State(app): State<App>,
     Path((scope, id)): Path<(String, String)>,
-    headers: HeaderMap,
+    Extension(_principal): Extension<Principal>,
 ) -> Result<Json<Record>> {
-    app.admin(&headers).await?;
     Ok(Json(app.store.get(&scope, "object", &id).await?))
 }
 async fn objects(
     State(app): State<App>,
     Path(scope): Path<String>,
-    headers: HeaderMap,
+    Extension(_principal): Extension<Principal>,
 ) -> Result<Json<Value>> {
-    app.admin(&headers).await?;
     Ok(Json(serde_json::to_value(
         app.store.list(&scope, "object").await?,
     )?))
@@ -194,11 +286,12 @@ async fn objects(
 async fn graph(
     State(app): State<App>,
     Path((scope, id)): Path<(String, String)>,
-    headers: HeaderMap,
+    Extension(principal): Extension<Principal>,
     Json(body): Json<Write<Graph>>,
 ) -> Result<Json<Record>> {
-    let principal = app.admin(&headers).await?;
-    name(&body.definition.execution_connector)?;
+    if let Some(connector) = &body.definition.execution_connector {
+        name(connector)?;
+    }
     if body.definition.objects.is_empty() || body.definition.objects.len() > 1000 {
         return Err(invalid("graph requires 1..1000 objects"));
     }
@@ -225,18 +318,16 @@ async fn graph(
 async fn draft(
     State(app): State<App>,
     Path((scope, id)): Path<(String, String)>,
-    headers: HeaderMap,
+    Extension(_principal): Extension<Principal>,
 ) -> Result<Json<Record>> {
-    app.admin(&headers).await?;
     Ok(Json(app.store.get(&scope, "graph", &id).await?))
 }
 async fn grants(
     State(app): State<App>,
     Path((scope, id)): Path<(String, String)>,
-    headers: HeaderMap,
+    Extension(principal): Extension<Principal>,
     Json(body): Json<Write<Grants>>,
 ) -> Result<Json<Record>> {
-    let principal = app.admin(&headers).await?;
     app.store.get(&scope, "graph", &id).await?;
     for role in body
         .definition
@@ -262,18 +353,16 @@ async fn grants(
 async fn read_grants(
     State(app): State<App>,
     Path((scope, id)): Path<(String, String)>,
-    headers: HeaderMap,
+    Extension(_principal): Extension<Principal>,
 ) -> Result<Json<Record>> {
-    app.admin(&headers).await?;
     Ok(Json(app.store.get(&scope, "grants", &id).await?))
 }
 async fn publish(
     State(app): State<App>,
     Path((scope, id)): Path<(String, String)>,
-    headers: HeaderMap,
+    Extension(principal): Extension<Principal>,
     Json(body): Json<Publish>,
 ) -> Result<Json<Manifest>> {
-    let principal = app.admin(&headers).await?;
     let _permit = app
         .publications
         .try_acquire()
@@ -296,9 +385,8 @@ async fn resolve(
     State(app): State<App>,
     Path((scope, id)): Path<(String, String)>,
     Query(read): Query<Read>,
-    headers: HeaderMap,
+    Extension(principal): Extension<Principal>,
 ) -> Result<Json<Resolved>> {
-    let principal = app.identity(&headers).await?;
     app.authorize(&scope, &id, &principal, true).await?;
     Ok(Json(Resolved {
         manifest: app.store.release(&scope, &id, read.revision).await?,
@@ -309,9 +397,8 @@ async fn discover(
     State(app): State<App>,
     Path((scope, id)): Path<(String, String)>,
     Query(read): Query<Read>,
-    headers: HeaderMap,
+    Extension(principal): Extension<Principal>,
 ) -> Result<Json<Value>> {
-    let principal = app.identity(&headers).await?;
     app.authorize(&scope, &id, &principal, false).await?;
     if read.q.len() > 256 {
         return Err(invalid("search text too long"));
@@ -325,15 +412,15 @@ async fn discover(
             if record.definition["kind"] == "connector" {
                 return None;
             }
+            if let Some(object) = record.definition.as_object_mut() {
+                object.remove("connector");
+                object.remove("iceberg");
+            }
             if !format!("{id} {}", record.definition)
                 .to_lowercase()
                 .contains(&query)
             {
                 return None;
-            }
-            if let Some(object) = record.definition.as_object_mut() {
-                object.remove("connector");
-                object.remove("iceberg");
             }
             Some(json!({"id":id,"version":record.version,"definition":record.definition}))
         })
@@ -345,9 +432,8 @@ async fn discover(
 async fn graphs(
     State(app): State<App>,
     Path(scope): Path<String>,
-    headers: HeaderMap,
+    Extension(principal): Extension<Principal>,
 ) -> Result<Json<Value>> {
-    let principal = app.identity(&headers).await?;
     let mut visible = Vec::new();
     for (id, _) in app.store.list(&scope, "active").await? {
         match app.authorize(&scope, &id, &principal, false).await {
@@ -364,8 +450,116 @@ async fn graphs(
 async fn audit(
     State(app): State<App>,
     Path(scope): Path<String>,
-    headers: HeaderMap,
+    Extension(_principal): Extension<Principal>,
 ) -> Result<Json<Value>> {
-    app.admin(&headers).await?;
     Ok(Json(json!(app.store.audit(&scope).await?)))
+}
+
+#[derive(Clone)]
+struct OAuthResponse;
+async fn token(
+    State(app): State<App>,
+    Path(scope): Path<String>,
+    headers: HeaderMap,
+    payload: std::result::Result<
+        Form<crate::auth::TokenRequest>,
+        axum::extract::rejection::FormRejection,
+    >,
+) -> Response {
+    if name(&scope).is_err() {
+        return oauth_error(StatusCode::UNAUTHORIZED, "invalid_client");
+    }
+    let Some(auth) = app.authentication.read().await.clone() else {
+        return oauth_error(StatusCode::UNAUTHORIZED, "invalid_client");
+    };
+    if !auth.token_service_enabled(&scope) {
+        return oauth_error(StatusCode::UNAUTHORIZED, "invalid_client");
+    }
+    let Ok(Form(request)) = payload else {
+        return oauth_error(StatusCode::BAD_REQUEST, "invalid_request");
+    };
+    let basic = match headers.get("authorization") {
+        None => None,
+        Some(value) => match value.to_str().ok().and_then(|v| v.strip_prefix("Basic ")) {
+            Some(value) => Some(value),
+            None => return oauth_error(StatusCode::UNAUTHORIZED, "invalid_client"),
+        },
+    };
+    match auth.token(&app.store, &scope, basic, request).await {
+        Ok(value) => Json(value).into_response(),
+        Err(Error::Invalid(_)) => oauth_error(StatusCode::BAD_REQUEST, "unsupported_grant_type"),
+        Err(_) => oauth_error(StatusCode::UNAUTHORIZED, "invalid_client"),
+    }
+}
+fn oauth_error(status: StatusCode, code: &str) -> Response {
+    let mut response = (status, Json(json!({"error":code}))).into_response();
+    response.extensions_mut().insert(OAuthResponse);
+    if status == StatusCode::UNAUTHORIZED {
+        response
+            .headers_mut()
+            .insert("www-authenticate", "Basic".parse().unwrap());
+    }
+    response
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrincipalRegistration {
+    principal: Principal,
+    #[serde(default = "principal_enabled")]
+    enabled: bool,
+}
+fn principal_enabled() -> bool {
+    true
+}
+async fn register_principal(
+    State(app): State<App>,
+    Path((scope, id)): Path<(String, String)>,
+    Extension(actor): Extension<Principal>,
+    Json(body): Json<Write<PrincipalRegistration>>,
+) -> Result<Json<Value>> {
+    let secret = crate::auth::new_secret();
+    let client = crate::auth::ClientRegistration {
+        client_id: id.clone(),
+        secret_sha256: crate::auth::fingerprint(&secret),
+        principal: body.definition.principal,
+        enabled: body.definition.enabled,
+    };
+    crate::auth::validate_client(&client)?;
+    let record = app
+        .store
+        .put(
+            &scope,
+            "auth_principal",
+            &id,
+            body.expected_version,
+            serde_json::to_value(&client)?,
+            &actor.subject,
+        )
+        .await?;
+    Ok(Json(
+        json!({"version":record.version,"client_id":id,"client_secret":secret,"principal":client.principal,"enabled":client.enabled}),
+    ))
+}
+async fn principal(
+    State(app): State<App>,
+    Path((scope, id)): Path<(String, String)>,
+    Extension(_actor): Extension<Principal>,
+) -> Result<Json<Record>> {
+    Ok(Json(crate::auth::public_record(
+        app.store.get(&scope, "auth_principal", &id).await?,
+    )))
+}
+async fn principals(
+    State(app): State<App>,
+    Path(scope): Path<String>,
+    Extension(_actor): Extension<Principal>,
+) -> Result<Json<Value>> {
+    let records: Vec<_> = app
+        .store
+        .list(&scope, "auth_principal")
+        .await?
+        .into_iter()
+        .map(|(id, record)| (id, crate::auth::public_record(record)))
+        .collect();
+    Ok(Json(json!(records)))
 }

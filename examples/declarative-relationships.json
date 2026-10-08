@@ -1,0 +1,139 @@
+{
+  "graph_id": "knowledge",
+  "objects": {
+    "shapes": {
+      "kind": "dataset",
+      "description": "Shape records",
+      "table": "shapes",
+      "columns": [
+        {
+          "name": "id",
+          "data_type": "string",
+          "nullable": false
+        },
+        {
+          "name": "geometry",
+          "data_type": "string"
+        }
+      ]
+    },
+    "shape": {
+      "kind": "entity",
+      "description": "A shape",
+      "dataset": "shapes",
+      "mapping": {
+        "label": "Shape",
+        "table": "shapes",
+        "id": "id",
+        "properties": {
+          "id": "id",
+          "geometry": "geometry"
+        }
+      }
+    },
+    "documents": {
+      "kind": "dataset",
+      "description": "Document records",
+      "table": "documents",
+      "columns": [
+        {
+          "name": "id",
+          "data_type": "string",
+          "nullable": false
+        },
+        {
+          "name": "embedding",
+          "data_type": "float32[]"
+        }
+      ]
+    },
+    "document": {
+      "kind": "entity",
+      "description": "A document",
+      "dataset": "documents",
+      "mapping": {
+        "label": "Document",
+        "table": "documents",
+        "id": "id",
+        "properties": {
+          "id": "id",
+          "embedding": "embedding"
+        }
+      }
+    },
+    "similar_shapes": {
+      "kind": "cypher_relationship",
+      "description": "Outgoing exact geometric matches, up to k per source shape. Equal scores are ordered by target ID.",
+      "name": "SIMILAR",
+      "source": "shape",
+      "target": "shape",
+      "parameters": [
+        {
+          "name": "k",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "default": 10
+        },
+        {
+          "name": "min_score",
+          "schema": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "default": 0.8
+        }
+      ],
+      "cypher": "WITH source\nMATCH (target:Shape)\nWHERE target.id <> source.id\nWITH target, robotics.geometry.similarity(source.geometry, target.geometry) AS score\nWHERE score >= $min_score\nRETURN target, score\nORDER BY score DESC, target.id\nLIMIT $k",
+      "returns": {
+        "target": "target",
+        "properties": {
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "related_documents": {
+      "kind": "cypher_relationship",
+      "description": "Outgoing approximate semantic neighbors, up to k per source document. Missing target IDs are dropped; the result may contain fewer than k edges.",
+      "name": "RELATED",
+      "source": "document",
+      "target": "document",
+      "parameters": [
+        {
+          "name": "k",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "default": 10
+        }
+      ],
+      "cypher": "WITH source\nCALL search.neighbors('document_embeddings', source.embedding, source.id, $k)\nYIELD target_id, score\nMATCH (target:Document {id: target_id})\nRETURN target, score\nORDER BY score DESC, target.id",
+      "returns": {
+        "target": "target",
+        "properties": {
+          "score": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          }
+        }
+      }
+    }
+  },
+  "graph": {
+    "description": "Declarative geometry and semantic relationships",
+    "objects": [
+      "similar_shapes",
+      "related_documents"
+    ]
+  }
+}

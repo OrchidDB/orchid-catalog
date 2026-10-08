@@ -1,0 +1,43 @@
+digraph catalog {
+  graph [rankdir=TB, fontname="Helvetica", fontsize=24, fontcolor="#15263F", bgcolor="white", pad=0.4, nodesep=0.55, ranksep=0.65, labelloc=t, labeljust=l, splines=polyline, compound=true, label="Orchid Catalog\n", dpi=144];
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled", fillcolor="#F3F6FA", color="#B9C7DA", fontcolor="#15263F", penwidth=1.2, margin="0.22,0.16"];
+  edge [fontname="Helvetica", fontsize=10, color="#6A7C94", fontcolor="#465C76", arrowsize=0.7, penwidth=1.3];
+
+  authors [shape=note, label="Registration tools / administrators\nDefine tables, entities, relationships\nand external binding contracts"];
+  agents [label="Agents\nUnderstand tables and relationships\nto construct queries"];
+  engine [shape=component, fillcolor="#E3F3EB", color="#9CC9B2", label="Embedded engine host\nResolve active or pinned release\nunder current grants for every query"];
+  {rank=same; authors; agents; engine;}
+
+  identity [shape=component, label="External identity provider\nOIDC / JWKS or introspection"];
+
+  subgraph cluster_catalog {
+    label="CATALOG SERVICE  ·  RUST / AXUM / TOKIO";
+    fontsize=12; fontcolor="#43638C"; color="#BDCEEA"; fillcolor="#F7FAFF"; style="rounded,filled"; margin=24;
+
+    access [shape=component, fillcolor="#DFEBFF", color="#7FA3D8", label="HTTP API\nAuthenticate before metadata parsing\nCurrent principal + graph grants"];
+    oauth [shape=component, label="Internal OAuth\nClient credentials / token exchange\nSymmetric or RSA signing"];
+    drafts [shape=note, label="Register & publish\nJSON Schema validation\nVersioned drafts + dependency checks"];
+    discovery [shape=note, label="Semantic discovery\nDescriptions · columns · keys\nRelationships + input/output contracts"];
+    manifest [shape=note, label="Release manifest\nSchema + registered definitions\nStable revision for each query"];
+    {rank=same; drafts; discovery; manifest;}
+
+    store [shape=cylinder, fillcolor="#DFEBFF", color="#7FA3D8", label="Catalog storage\nSQLite OR PostgreSQL\nDrafts · immutable releases · live grants · audit"];
+
+    oauth -> store [label="Current principal / credential generation"];
+    access -> oauth [label="Validate internal token"];
+    access -> drafts [label="Admin"];
+    access -> discovery [label="Discover / execute"];
+    access -> manifest [label="Execute"];
+    drafts -> store [label="Atomic publication"];
+    discovery -> store [label="Read authorized release"];
+    manifest -> store [label="Read active or pinned release"];
+  }
+
+  engine -> oauth [label="Acquire / renew internal token"];
+  engine -> identity [label="Acquire external token"];
+  access -> identity [label="Discovery / keys / introspection"];
+  authors -> access [label="Typed client API / publish"];
+  agents -> access [label="GET discover"];
+  engine -> access [label="GET resolve"];
+
+}

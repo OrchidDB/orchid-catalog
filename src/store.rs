@@ -1,6 +1,9 @@
 use crate::{Error, Result, assembly, error::invalid, model::*};
 use serde_json::{Value, json};
-use sqlx::{AnyPool, Row, any::AnyPoolOptions};
+use sqlx::{
+    AnyPool, ConnectOptions, Row,
+    any::{AnyConnectOptions, AnyPoolOptions},
+};
 use std::{collections::BTreeMap, time::Duration};
 
 #[derive(Clone)]
@@ -36,7 +39,10 @@ impl Store {
                     Ok(())
                 })
             })
-            .connect(url)
+            .connect_with(
+                url.parse::<AnyConnectOptions>()?
+                    .disable_statement_logging(),
+            )
             .await?;
         let store = Self { pool, sqlite };
         store.migrate().await?;
@@ -89,7 +95,7 @@ impl Store {
         actor: &str,
     ) -> Result<Record> {
         name(scope)?;
-        name(id)?;
+        if kind == "auth_principal" { principal_id(id)?; } else { name(id)?; }
         if expected < 0 || expected == i64::MAX {
             return Err(invalid("invalid expected version"));
         }
@@ -157,7 +163,7 @@ impl Store {
         let mut selected = BTreeMap::new();
         let mut objects = BTreeMap::new();
         let mut pending = graph.objects.clone();
-        pending.push(graph.execution_connector.clone());
+        pending.extend(graph.execution_connector.clone());
         while let Some(key) = pending.pop() {
             if selected.contains_key(&key) {
                 continue;
@@ -184,7 +190,15 @@ impl Store {
         let schema = assembly::assemble(&graph, &objects)?;
         let revision = request.expected_revision + 1;
         let manifest = Manifest {
-            protocol_version: 1,
+            protocol_version: if graph.execution_connector.is_none()
+                || objects
+                    .values()
+                    .any(|object| matches!(object["kind"].as_str(), Some("cypher_relationship")))
+            {
+                2
+            } else {
+                1
+            },
             scope: scope.into(),
             graph: id.into(),
             revision,

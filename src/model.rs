@@ -21,6 +21,13 @@ pub fn name(value: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn principal_id(value: &str) -> Result<()> {
+    if value.is_empty() || value.len() > 256 || value.chars().any(|c| c.is_control() || c == '/') {
+        return Err(invalid("principal IDs require 1..256 bytes without slashes or control characters"));
+    }
+    Ok(())
+}
+
 pub fn validate_object(value: &Value) -> Result<()> {
     static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
     let validator = VALIDATOR.get_or_init(|| {
@@ -64,6 +71,58 @@ pub fn validate_object(value: &Value) -> Result<()> {
                 .map_err(|_| invalid(format!("{field} is not a valid JSON Schema")))?;
         }
     }
+    if value["kind"] == "cypher_relationship" {
+        let mut names = std::collections::BTreeSet::new();
+        for parameter in value["parameters"].as_array().unwrap() {
+            let parameter_name = parameter["name"].as_str().unwrap();
+            if !names.insert(parameter_name) {
+                return Err(invalid("duplicate parameter name"));
+            }
+            let schema = &parameter["schema"];
+            jsonschema::meta::validate(schema)
+                .map_err(|_| invalid("parameter schema is not a valid JSON Schema"))?;
+            // Only local references: registration must never fetch a schema from a network.
+            let validator = jsonschema::options()
+                .with_retriever(LocalSchemasOnly)
+                .build(schema)
+                .map_err(|_| invalid("parameter schema must be self-contained and valid"))?;
+            if let Some(default) = parameter.get("default") {
+                validator
+                    .validate(default)
+                    .map_err(|_| invalid(format!("invalid default for {parameter_name}")))?;
+            }
+        }
+        if value["cypher"].as_str().unwrap().trim().is_empty() {
+            return Err(invalid("Cypher body must not be blank"));
+        }
+        let target = value["returns"]["target"].as_str().unwrap();
+        for (column, schema) in value["returns"]["properties"].as_object().unwrap() {
+            if column == target {
+                return Err(invalid("target column cannot also be an edge property"));
+            }
+            validate_contract_schema(schema)?;
+        }
+    }
+    Ok(())
+}
+
+struct LocalSchemasOnly;
+impl jsonschema::Retrieve for LocalSchemasOnly {
+    fn retrieve(
+        &self,
+        _: &jsonschema::Uri<String>,
+    ) -> std::result::Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        Err("external schema references are not supported".into())
+    }
+}
+
+fn validate_contract_schema(schema: &Value) -> Result<()> {
+    jsonschema::meta::validate(schema)
+        .map_err(|_| invalid("return schema is not a valid JSON Schema"))?;
+    jsonschema::options()
+        .with_retriever(LocalSchemasOnly)
+        .build(schema)
+        .map_err(|_| invalid("return schema must be self-contained and valid"))?;
     Ok(())
 }
 
@@ -72,7 +131,7 @@ pub fn dependencies(object: &Value) -> Vec<String> {
         Some("dataset") => &["connector"],
         Some("entity") => &["dataset"],
         Some("relationship") => &["dataset", "source", "target"],
-        Some("computed_relationship") => &["source", "target"],
+        Some("computed_relationship" | "cypher_relationship") => &["source", "target"],
         Some("retrieval") => &["target", "connector"],
         _ => &[],
     };
@@ -98,7 +157,8 @@ pub fn dependencies(object: &Value) -> Vec<String> {
 pub struct Graph {
     pub description: String,
     pub objects: Vec<String>,
-    pub execution_connector: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_connector: Option<String>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -44,7 +44,7 @@ impl IntoResponse for Error {
                 (StatusCode::CONFLICT, "version conflict".into())
             }
             _ => {
-                tracing::error!(error = %self, "catalog request failed");
+                tracing::error!("catalog request failed");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal error".into())
             }
         };

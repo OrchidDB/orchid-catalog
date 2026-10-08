@@ -1,11 +1,11 @@
 {
-  "weaviate": {
+  "document_backend": {
     "kind": "connector",
     "description": "Document search deployment",
-    "adapter": "weaviate",
+    "adapter": "document_backend",
     "protocol_version": 1,
-    "endpoint": "https://weaviate.example.com",
-    "credential_ref": "weaviate_read",
+    "endpoint": "https://documents.example.com",
+    "credential_ref": "document_backend_read",
     "capabilities": [
       "hybrid",
       "tenant_filter"
@@ -15,7 +15,7 @@
     "kind": "retrieval",
     "description": "Ranked candidate documents, not an exhaustive relationship. Join canonical IDs before returning content.",
     "target": "document",
-    "connector": "weaviate",
+    "connector": "document_backend",
     "collection": "Documents",
     "key_field": "document_id",
     "text_field": "body",
@@ -41,13 +41,13 @@
       "additionalProperties": false
     }
   },
-  "quickwit": {
+  "log_backend": {
     "kind": "connector",
     "description": "Log search deployment",
-    "adapter": "quickwit",
+    "adapter": "log_backend",
     "protocol_version": 1,
-    "endpoint": "https://quickwit.example.com",
-    "credential_ref": "quickwit_read",
+    "endpoint": "https://logs.example.com",
+    "credential_ref": "log_backend_read",
     "capabilities": [
       "bm25",
       "tenant_filter",
@@ -58,7 +58,7 @@
     "kind": "retrieval",
     "description": "Search log candidates, then join their stable event IDs to canonical LogEvent entities.",
     "target": "log_event",
-    "connector": "quickwit",
+    "connector": "log_backend",
     "collection": "logs",
     "key_field": "event_id",
     "text_field": "message",

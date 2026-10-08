@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod api;
 pub mod assembly;
 pub mod error;

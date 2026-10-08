@@ -52,11 +52,11 @@ fn properties(dataset: &Value, mapping: &Value) -> Result<()> {
 }
 
 pub fn assemble(graph: &Graph, objects: &BTreeMap<String, Object>) -> Result<Value> {
-    let target = object(objects, &graph.execution_connector, "connector")?;
-    let mut engines = BTreeMap::from([(
-        graph.execution_connector.clone(),
-        json!({"dialect":target["adapter"]}),
-    )]);
+    let mut engines = BTreeMap::new();
+    if let Some(connector) = &graph.execution_connector {
+        let target = object(objects, connector, "connector")?;
+        engines.insert(connector.clone(), json!({"dialect":target["adapter"]}));
+    }
     let mut tables = Vec::new();
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
@@ -94,10 +94,14 @@ pub fn assemble(graph: &Graph, objects: &BTreeMap<String, Object>) -> Result<Val
                 }
                 let owner = definition["connector"]
                     .as_str()
-                    .unwrap_or(&graph.execution_connector);
-                let connector = object(objects, owner, "connector")?;
-                engines.insert(owner.into(), json!({"dialect":connector["adapter"]}));
-                tables.push(json!({"name":table,"columns":columns,"engine":owner}));
+                    .or(graph.execution_connector.as_deref());
+                let mut table_definition = json!({"name":table,"columns":columns});
+                if let Some(owner) = owner {
+                    let connector = object(objects, owner, "connector")?;
+                    engines.insert(owner.into(), json!({"dialect":connector["adapter"]}));
+                    table_definition["engine"] = json!(owner);
+                }
+                tables.push(table_definition);
                 if let Some(source) = definition.get("source_metadata") {
                     let mut source = source.clone();
                     source["table"] = json!(table);
@@ -169,6 +173,13 @@ pub fn assemble(graph: &Graph, objects: &BTreeMap<String, Object>) -> Result<Val
                         return Err(invalid("ranked relationships require order_by"));
                     }
                     computed.push(mapping.clone());
+                }
+            }
+            "cypher_relationship" => {
+                object(objects, text(definition, "source")?, "entity")?;
+                object(objects, text(definition, "target")?, "entity")?;
+                if !edge_labels.insert(text(definition, "name")?) {
+                    return Err(invalid("duplicate relationship label"));
                 }
             }
             "retrieval" => {
