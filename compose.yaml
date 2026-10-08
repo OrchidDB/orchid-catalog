@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: orchid_catalog
+      POSTGRES_USER: orchid_catalog
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - catalog-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchid_catalog"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  catalog-postgres:

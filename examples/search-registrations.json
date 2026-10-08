@@ -1,0 +1,71 @@
+{
+  "weaviate": {
+    "kind": "connector",
+    "description": "Document search deployment",
+    "adapter": "weaviate",
+    "protocol_version": 1,
+    "endpoint": "https://weaviate.example.com",
+    "credential_ref": "weaviate_read",
+    "capabilities": [
+      "hybrid",
+      "tenant_filter"
+    ]
+  },
+  "document_search": {
+    "kind": "retrieval",
+    "description": "Ranked candidate documents, not an exhaustive relationship. Join canonical IDs before returning content.",
+    "target": "document",
+    "connector": "weaviate",
+    "collection": "Documents",
+    "key_field": "document_id",
+    "text_field": "body",
+    "mode": "hybrid",
+    "max_results": 100,
+    "tenant_required": true,
+    "score_description": "Provider-specific hybrid score; higher is better. Not comparable to other providers.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "quickwit": {
+    "kind": "connector",
+    "description": "Log search deployment",
+    "adapter": "quickwit",
+    "protocol_version": 1,
+    "endpoint": "https://quickwit.example.com",
+    "credential_ref": "quickwit_read",
+    "capabilities": [
+      "bm25",
+      "tenant_filter",
+      "time_range"
+    ]
+  },
+  "log_search": {
+    "kind": "retrieval",
+    "description": "Search log candidates, then join their stable event IDs to canonical LogEvent entities.",
+    "target": "log_event",
+    "connector": "quickwit",
+    "collection": "logs",
+    "key_field": "event_id",
+    "text_field": "message",
+    "mode": "bm25",
+    "max_results": 100,
+    "tenant_required": true,
+    "tenant_field": "tenant_id",
+    "score_description": "BM25 score; higher is better."
+  }
+}

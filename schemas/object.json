@@ -1,0 +1,693 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:orchid:catalog:object:1",
+  "title": "Orchid Catalog object v1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/dataset"
+    },
+    {
+      "$ref": "#/$defs/entity"
+    },
+    {
+      "$ref": "#/$defs/relationship"
+    },
+    {
+      "$ref": "#/$defs/computed_relationship"
+    },
+    {
+      "$ref": "#/$defs/connector"
+    },
+    {
+      "$ref": "#/$defs/retrieval"
+    }
+  ],
+  "$defs": {
+    "dataset": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "uniqueItems": true
+        },
+        "owner": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "kind": {
+          "const": "dataset"
+        },
+        "table": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              },
+              "data_type": {
+                "enum": [
+                  "int64",
+                  "int32",
+                  "string",
+                  "float64",
+                  "float32",
+                  "boolean",
+                  "date",
+                  "timestamp",
+                  "float32[]",
+                  "float64[]"
+                ]
+              },
+              "nullable": {
+                "type": "boolean"
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 16384
+              },
+              "field_id": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "name",
+              "data_type"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        },
+        "connector": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "iceberg": {
+          "type": "object",
+          "properties": {
+            "catalog": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "namespace": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
+            "table": {
+              "type": "string",
+              "minLength": 1
+            },
+            "table_uuid": {
+              "type": "string",
+              "minLength": 1
+            },
+            "schema_id": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "catalog",
+            "namespace",
+            "table",
+            "table_uuid",
+            "schema_id"
+          ],
+          "additionalProperties": false
+        },
+        "source_metadata": {
+          "type": "object",
+          "properties": {
+            "format": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "options": {
+              "type": "object"
+            },
+            "indexes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "column": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                  },
+                  "metric": {
+                    "enum": [
+                      "bm25",
+                      "cosine",
+                      "dot",
+                      "l2",
+                      "maxsim"
+                    ]
+                  },
+                  "options": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "column",
+                  "metric"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "kind",
+        "description",
+        "table",
+        "columns"
+      ],
+      "additionalProperties": false
+    },
+    "entity": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "uniqueItems": true
+        },
+        "owner": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "kind": {
+          "const": "entity"
+        },
+        "dataset": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "mapping": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "table": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "id": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                  },
+                  "minItems": 1,
+                  "maxItems": 16,
+                  "uniqueItems": true
+                }
+              ]
+            },
+            "properties": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              }
+            }
+          },
+          "required": [
+            "label",
+            "table",
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "kind",
+        "description",
+        "dataset",
+        "mapping"
+      ],
+      "additionalProperties": false
+    },
+    "relationship": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "uniqueItems": true
+        },
+        "owner": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "kind": {
+          "const": "relationship"
+        },
+        "dataset": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "mapping": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "table": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "id": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                  },
+                  "minItems": 1,
+                  "maxItems": 16,
+                  "uniqueItems": true
+                }
+              ]
+            },
+            "source": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                  },
+                  "minItems": 1,
+                  "maxItems": 16,
+                  "uniqueItems": true
+                }
+              ]
+            },
+            "target": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                  },
+                  "minItems": 1,
+                  "maxItems": 16,
+                  "uniqueItems": true
+                }
+              ]
+            },
+            "source_label": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "target_label": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "properties": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              }
+            }
+          },
+          "required": [
+            "label",
+            "table",
+            "id",
+            "source",
+            "target",
+            "source_label",
+            "target_label"
+          ],
+          "additionalProperties": false
+        },
+        "cardinality": {
+          "enum": [
+            "one_to_one",
+            "one_to_many",
+            "many_to_one",
+            "many_to_many"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "description",
+        "dataset",
+        "source",
+        "target",
+        "mapping"
+      ],
+      "additionalProperties": false
+    },
+    "computed_relationship": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "uniqueItems": true
+        },
+        "owner": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "kind": {
+          "const": "computed_relationship"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "mapping": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "source": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "target": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+            },
+            "predicate": {
+              "type": "string",
+              "maxLength": 16384
+            },
+            "properties": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 16384
+              }
+            },
+            "order_by": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "expression": {
+                    "type": "string",
+                    "maxLength": 16384
+                  },
+                  "direction": {
+                    "enum": [
+                      "asc",
+                      "desc"
+                    ]
+                  },
+                  "nulls": {
+                    "enum": [
+                      "first",
+                      "last"
+                    ]
+                  }
+                },
+                "required": [
+                  "expression"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "limit_per_source": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            "retrieval": {
+              "enum": [
+                "exact",
+                "approximate_allowed"
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "source",
+            "target"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "kind",
+        "description",
+        "source",
+        "target",
+        "mapping"
+      ],
+      "additionalProperties": false
+    },
+    "connector": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "uniqueItems": true
+        },
+        "owner": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "kind": {
+          "const": "connector"
+        },
+        "adapter": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "protocol_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "endpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "credential_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "description",
+        "adapter",
+        "protocol_version"
+      ],
+      "additionalProperties": false
+    },
+    "retrieval": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "uniqueItems": true
+        },
+        "owner": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "kind": {
+          "const": "retrieval"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "connector": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "collection": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "key_field": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "text_field": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "max_results": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "tenant_required": {
+          "type": "boolean"
+        },
+        "tenant_field": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "score_description": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "indexed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "max_age_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_snapshot": {
+          "type": "string"
+        },
+        "input_schema": {
+          "type": [
+            "object",
+            "boolean"
+          ]
+        },
+        "output_schema": {
+          "type": [
+            "object",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "description",
+        "target",
+        "connector",
+        "collection",
+        "key_field",
+        "mode",
+        "max_results",
+        "score_description"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

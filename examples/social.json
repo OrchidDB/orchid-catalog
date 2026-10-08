@@ -1,0 +1,82 @@
+{
+  "objects": {
+    "local": {
+      "kind": "connector",
+      "description": "Application-owned DuckDB connection",
+      "adapter": "duckdb",
+      "protocol_version": 1
+    },
+    "people": {
+      "kind": "dataset",
+      "description": "People who can follow one another",
+      "table": "people",
+      "columns": [
+        {
+          "name": "id",
+          "data_type": "int64",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "data_type": "string"
+        }
+      ]
+    },
+    "person": {
+      "kind": "entity",
+      "description": "A person. id is stable; name is a display name.",
+      "dataset": "people",
+      "mapping": {
+        "label": "Person",
+        "table": "people",
+        "id": "id",
+        "properties": {
+          "name": "name"
+        }
+      }
+    },
+    "links": {
+      "kind": "dataset",
+      "description": "Directed follows. Multiple relationships may share endpoints.",
+      "table": "follows",
+      "columns": [
+        {
+          "name": "id",
+          "data_type": "int64"
+        },
+        {
+          "name": "src",
+          "data_type": "int64"
+        },
+        {
+          "name": "dst",
+          "data_type": "int64"
+        }
+      ]
+    },
+    "follows": {
+      "kind": "relationship",
+      "description": "The source person follows the target person.",
+      "cardinality": "many_to_many",
+      "dataset": "links",
+      "source": "person",
+      "target": "person",
+      "mapping": {
+        "label": "FOLLOWS",
+        "table": "follows",
+        "id": "id",
+        "source": "src",
+        "target": "dst",
+        "source_label": "Person",
+        "target_label": "Person"
+      }
+    }
+  },
+  "graph": {
+    "description": "Social graph",
+    "objects": [
+      "follows"
+    ],
+    "execution_connector": "local"
+  }
+}
