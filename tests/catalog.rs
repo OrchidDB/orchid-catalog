@@ -241,6 +241,14 @@ async fn scenario(database: &str) {
     assert!(discoverer.resolve("social", None).await.is_err());
     assert!(outsider.discover("social", None).await.is_err());
     let old = reader.resolve("social", None).await.unwrap();
+    let unchanged: Value = reader.request(Method::GET, "graphs/social/resolve?known_revision=1", None).await.unwrap();
+    assert_eq!(unchanged["unchanged"], true);
+    assert_eq!(unchanged["revision"], 1);
+    assert_eq!(unchanged["scope"], scope);
+    assert_eq!(unchanged["graph"], "social");
+    assert!(unchanged.get("manifest").is_none());
+    assert!(discoverer.request::<Value>(Method::GET, "graphs/social/resolve?known_revision=1", None).await.is_err());
+
     // Register a relationship independently, publish, then a new embedded engine sees it.
     admin
         .put_graph(
@@ -282,6 +290,13 @@ async fn scenario(database: &str) {
         "exactly one concurrent publisher wins"
     );
     let new = reader.resolve("social", None).await.unwrap();
+    let changed: Value = reader.request(Method::GET, "graphs/social/resolve?known_revision=1", None).await.unwrap();
+    assert_eq!(changed["manifest"]["revision"], 2);
+    let pinned: Value = reader.request(Method::GET, "graphs/social/resolve?revision=1&known_revision=1", None).await.unwrap();
+    assert_eq!(pinned["unchanged"], true);
+    assert_eq!(pinned["revision"], 1);
+    assert!(reader.request::<Value>(Method::GET, "graphs/social/resolve?revision=99&known_revision=99", None).await.is_err());
+
     assert_eq!(old.manifest.revision, 1);
     assert_eq!(new.manifest.revision, 2);
     assert_eq!(new.manifest.schema["edges"][0]["label"], "FOLLOWS");
@@ -332,6 +347,7 @@ async fn scenario(database: &str) {
         .await
         .unwrap();
     assert!(reader.resolve("social", Some(1)).await.is_err());
+    assert!(reader.request::<Value>(Method::GET, "graphs/social/resolve?revision=1&known_revision=1", None).await.is_err());
     assert!(reader.discover("social", Some(1)).await.is_err());
     assert_eq!(
         store

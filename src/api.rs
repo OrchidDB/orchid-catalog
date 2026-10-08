@@ -377,6 +377,7 @@ async fn publish(
 #[derive(Default, Deserialize)]
 struct Read {
     revision: Option<i64>,
+    known_revision: Option<i64>,
     #[serde(default)]
     q: String,
 }
@@ -386,12 +387,16 @@ async fn resolve(
     Path((scope, id)): Path<(String, String)>,
     Query(read): Query<Read>,
     Extension(principal): Extension<Principal>,
-) -> Result<Json<Resolved>> {
+) -> Result<Json<Value>> {
     app.authorize(&scope, &id, &principal, true).await?;
-    Ok(Json(Resolved {
-        manifest: app.store.release(&scope, &id, read.revision).await?,
+    let revision = app.store.release_revision(&scope, &id, read.revision).await?;
+    if read.known_revision == Some(revision) {
+        return Ok(Json(json!({"unchanged": true, "scope": scope, "graph": id, "revision": revision, "principal": principal})));
+    }
+    Ok(Json(serde_json::to_value(Resolved {
+        manifest: app.store.release(&scope, &id, Some(revision)).await?,
         principal,
-    }))
+    })?))
 }
 async fn discover(
     State(app): State<App>,

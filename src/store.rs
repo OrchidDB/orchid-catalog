@@ -234,6 +234,19 @@ impl Store {
         Ok(manifest)
     }
 
+    pub async fn release_revision(&self, scope: &str, id: &str, revision: Option<i64>) -> Result<i64> {
+        match revision {
+            None => Ok(self.get(scope, "active", id).await?.version),
+            Some(revision) if revision > 0 => {
+                let row = sqlx::query("SELECT revision FROM catalog_releases WHERE scope=$1 AND graph=$2 AND revision=$3")
+                    .bind(scope).bind(id).bind(revision).fetch_optional(&self.pool).await?
+                    .ok_or(Error::NotFound)?;
+                Ok(row.try_get("revision")?)
+            }
+            Some(_) => Err(invalid("invalid revision")),
+        }
+    }
+
     pub async fn release(&self, scope: &str, id: &str, revision: Option<i64>) -> Result<Manifest> {
         let revision = match revision {
             Some(r) if r > 0 => r,
