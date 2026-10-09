@@ -7,4 +7,6 @@
 - Preserve immutable published releases. Apply current grants to historical reads.
 - Validate structural relationships here; query binding, provider capabilities,
   data authorization, credentials, and execution belong to the consuming engine.
+- Execution backends are orthogonal. Backend names are registration data; never
+  add provider-specific branches, SDKs, network calls, or availability checks.
 - Run tests locally. Exercise both database backends when PostgreSQL is available.

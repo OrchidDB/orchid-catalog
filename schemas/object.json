@@ -62,18 +62,10 @@
                 "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
               },
               "data_type": {
-                "enum": [
-                  "int64",
-                  "int32",
-                  "string",
-                  "float64",
-                  "float32",
-                  "boolean",
-                  "date",
-                  "timestamp",
-                  "float32[]",
-                  "float64[]"
-                ]
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16384,
+                "description": "Engine type expression. The catalog preserves it; the consuming engine validates its type grammar."
               },
               "nullable": {
                 "type": "boolean"

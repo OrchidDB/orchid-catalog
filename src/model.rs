@@ -218,3 +218,14 @@ pub struct Resolved {
     pub manifest: Manifest,
     pub principal: Principal,
 }
+
+#[cfg(test)]
+mod native_type_tests {
+    #[test]
+    fn preserves_nested_engine_types() {
+        for ty in ["list:string", r#"struct:{"id":"string","count":"int64"}"#, "json", "binary"] {
+            super::validate_object(&serde_json::json!({"kind":"dataset","description":"Typed rows","table":"typed_rows","columns":[{"name":"value","data_type":ty}]})).unwrap();
+        }
+        assert!(super::validate_object(&serde_json::json!({"kind":"dataset","description":"Invalid","table":"typed_rows","columns":[{"name":"value","data_type":""}]})).is_err());
+    }
+}
