@@ -182,20 +182,20 @@ impl Authenticator {
     }
     pub async fn authenticate(&self, store: &Store, scope: &str, token: &str) -> Result<Principal> {
         let policy = self.policy(scope);
-        if policy.mode != Mode::External {
-            if let Some(internal) = &policy.internal {
-                if let Ok((principal, _)) = internal.verify(store, scope, token).await {
-                    return Ok(principal);
-                }
-                if unverified_issuer(token).as_deref() == Some(&internal.config.issuer) {
-                    return Err(Error::Unauthorized);
-                }
+        if policy.mode != Mode::External
+            && let Some(internal) = &policy.internal
+        {
+            if let Ok((principal, _)) = internal.verify(store, scope, token).await {
+                return Ok(principal);
+            }
+            if unverified_issuer(token).as_deref() == Some(&internal.config.issuer) {
+                return Err(Error::Unauthorized);
             }
         }
-        if policy.mode != Mode::Internal {
-            if let Some(external) = &policy.external {
-                return external.verify(store, scope, token).await;
-            }
+        if policy.mode != Mode::Internal
+            && let Some(external) = &policy.external
+        {
+            return external.verify(store, scope, token).await;
         }
         Err(Error::Unauthorized)
     }
@@ -270,12 +270,11 @@ impl Authenticator {
             _ => return Err(invalid("unsupported_grant_type")),
         };
         select_roles(&mut principal, request.scope.as_deref())?;
-        if let Some(claims) = inherited {
-            if principal.roles.iter().any(|r| !claims.roles.contains(r))
-                || (principal.admin && !claims.admin)
-            {
-                return Err(Error::Unauthorized);
-            }
+        if let Some(claims) = inherited
+            && (principal.roles.iter().any(|r| !claims.roles.contains(r))
+                || (principal.admin && !claims.admin))
+        {
+            return Err(Error::Unauthorized);
         }
         let now = now();
         let claims = Claims {
@@ -523,10 +522,10 @@ impl External {
             if claims["active"] != true
                 || claims["iss"].as_str() != Some(&self.config.issuer)
                 || !valid_audience
-                || !claims["exp"].as_u64().is_some_and(|exp| exp > now())
+                || claims["exp"].as_u64().is_none_or(|exp| exp <= now())
                 || claims
                     .get("nbf")
-                    .is_some_and(|v| !v.as_u64().is_some_and(|nbf| nbf <= now()))
+                    .is_some_and(|v| v.as_u64().is_none_or(|nbf| nbf > now()))
             {
                 return Err(Error::Unauthorized);
             }
@@ -778,7 +777,7 @@ fn select_roles(principal: &mut Principal, scope: Option<&str>) -> Result<()> {
         .map(|r| r.strip_prefix("PRINCIPAL_ROLE:").ok_or(Error::Unauthorized))
         .collect::<Result<Vec<_>>>()?;
     if selected.iter().any(|r| {
-        !principal.roles.iter().any(|p| p == r) && !(*r == "service_admin" && principal.admin)
+        !(principal.roles.iter().any(|p| p == r) || *r == "service_admin" && principal.admin)
     }) {
         return Err(Error::Unauthorized);
     }

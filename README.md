@@ -19,6 +19,14 @@ source and SVG/PNG exports.
 
 ## Run locally
 
+Download the macOS Apple Silicon binary or the portable source archive from
+[GitHub Releases](https://github.com/OrchidDB/orchid-catalog/releases).
+Verify the archive against the release's `SHA256SUMS` before extracting it.
+The binary archive includes `bin/orchid-catalog`; use that executable in place
+of `cargo run --locked --` in the bootstrap command below, and in place of
+`cargo run --locked` when starting the service. Linux and other architectures
+can build the source archive with `cargo build --locked --release`.
+
 Requires Rust 1.92 or later. Bootstrap a local administrator and signing key:
 
 ```sh
